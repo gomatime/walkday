@@ -1,0 +1,812 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f7f2">
+  <title>ウォーキングX</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #24342d;
+      --muted: #718078;
+      --green: #28664c;
+      --green-dark: #194c37;
+      --line: #e3e9e3;
+      --paper: #fff;
+      --canvas: #f5f7f2;
+      --accent: #e7f2e9;
+      --warning: #fff6df;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--canvas);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans JP", sans-serif;
+      line-height: 1.55;
+    }
+
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+
+    .shell { max-width: 1160px; margin: 0 auto; padding: 24px; }
+    header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+    .brand-icon {
+      display: grid;
+      width: 46px;
+      height: 46px;
+      place-items: center;
+      border-radius: 15px;
+      background: var(--accent);
+      font-size: 25px;
+    }
+    h1 { margin: 0; font-size: 22px; letter-spacing: .02em; }
+    .tagline { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+
+    .layout { display: grid; grid-template-columns: 370px minmax(0, 1fr); gap: 20px; align-items: start; }
+    .panel, .map-card, .results-card {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: 0 8px 30px rgb(31 58 43 / 5%);
+    }
+    .panel { padding: 20px; }
+    .panel h2, .results-card h2 { margin: 0 0 16px; font-size: 17px; }
+    .field { margin: 0 0 15px; }
+    .field > label, .field-label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 700; }
+    .control {
+      width: 100%;
+      min-height: 44px;
+      padding: 9px 12px;
+      border: 1px solid #d7e0d9;
+      border-radius: 11px;
+      background: #fff;
+      color: var(--ink);
+    }
+    .control:focus { outline: 3px solid #d5eadb; border-color: var(--green); }
+    .input-row { display: flex; gap: 8px; }
+    .input-row .control { min-width: 0; flex: 1; }
+    .secondary-button, .primary-button {
+      min-height: 43px;
+      padding: 9px 13px;
+      border: 0;
+      border-radius: 11px;
+      font-weight: 700;
+    }
+    .secondary-button { background: #edf2ee; color: var(--green-dark); }
+    .primary-button { width: 100%; background: var(--green); color: #fff; }
+    .primary-button:hover { background: var(--green-dark); }
+    button:disabled { cursor: wait; opacity: .65; }
+
+    .choice-row { display: flex; gap: 7px; }
+    .choice {
+      flex: 1;
+      min-height: 42px;
+      padding: 7px 5px;
+      border: 1px solid #d7e0d9;
+      border-radius: 10px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .choice[aria-pressed="true"] { border-color: var(--green); background: var(--accent); color: var(--green-dark); }
+    .small-note { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+    .station-results { display: grid; gap: 5px; margin-top: 8px; }
+    .station-option {
+      width: 100%;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #fff;
+      color: var(--ink);
+      text-align: left;
+    }
+    .station-option:hover { border-color: var(--green); background: #f8fbf8; }
+    .station-option small { display: block; color: var(--muted); }
+    .hidden { display: none !important; }
+
+    .category-list { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .category-option {
+      display: flex;
+      min-height: 42px;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 9px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      font-size: 13px;
+    }
+    .category-option input { accent-color: var(--green); }
+    .rank-select { margin-top: 11px; }
+    .info-box {
+      margin: 13px 0;
+      padding: 10px 11px;
+      border-radius: 11px;
+      background: var(--warning);
+      color: #675526;
+      font-size: 12px;
+    }
+    .location-button { width: 100%; margin-top: 8px; }
+    .route-note {
+      margin: 0 0 12px;
+      padding: 9px 11px;
+      border-left: 4px solid #d9822b;
+      border-radius: 8px;
+      background: #fff4e8;
+      color: #7a4a14;
+      font-size: 13px;
+    }
+    .status { min-height: 22px; margin: 11px 0 0; color: var(--muted); font-size: 13px; }
+    .status.error { color: #a83232; }
+
+    .right-column { display: grid; gap: 16px; }
+    .map-card { overflow: hidden; }
+    #map { height: 490px; width: 100%; background: #e9efea; }
+    .map-caption { padding: 10px 14px; color: var(--muted); font-size: 12px; }
+    .results-card { padding: 18px; }
+    .results-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+    .results-heading h2 { margin-bottom: 12px; }
+    .results-summary { color: var(--muted); font-size: 13px; }
+    .spot-list { display: grid; gap: 9px; }
+    .spot {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+    }
+    .spot-name { font-weight: 700; }
+    .spot-meta { color: var(--muted); font-size: 12px; }
+    .spot a { flex: 0 0 auto; color: var(--green); font-size: 12px; font-weight: 700; text-decoration: none; }
+    .spot a:hover { text-decoration: underline; }
+    .empty-state { margin: 0; color: var(--muted); font-size: 13px; }
+    footer { margin: 17px 2px 0; color: var(--muted); font-size: 11px; }
+
+    @media (max-width: 800px) {
+      .shell { padding: 16px; }
+      .layout { grid-template-columns: 1fr; gap: 14px; }
+      .panel { padding: 17px; }
+      #map { height: 360px; }
+    }
+    @media (max-width: 420px) {
+      .shell { padding: 12px; }
+      .choice { font-size: 12px; }
+      #map { height: 310px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div class="brand-icon" aria-hidden="true">🌿</div>
+      <div>
+        <h1>ウォーキングX</h1>
+        <p class="tagline">駅から歩いて、気になる場所へ。</p>
+      </div>
+    </header>
+
+    <div class="layout">
+      <section class="panel" aria-labelledby="settings-title">
+        <h2 id="settings-title">散歩をつくる</h2>
+
+        <div class="field">
+          <label for="start-query">出発地</label>
+          <div class="input-row">
+            <input class="control" id="start-query" type="search" placeholder="駅名（例：鎌倉駅）" autocomplete="off">
+            <button class="secondary-button" id="search-start" type="button">検索</button>
+          </div>
+          <button class="secondary-button location-button" id="use-location" type="button">📍 現在地から出発</button>
+          <div class="station-results" id="start-results" aria-live="polite"></div>
+        </div>
+
+        <div class="field">
+          <span class="field-label">ルート</span>
+          <div class="choice-row" role="group" aria-label="ルートの種類">
+            <button class="choice" type="button" data-route="roundtrip" aria-pressed="true">出発地に戻る</button>
+            <button class="choice" type="button" data-route="oneway" aria-pressed="false">別の駅へ</button>
+          </div>
+        </div>
+
+        <div class="field hidden" id="end-field">
+          <label for="end-query">到着駅</label>
+          <div class="input-row">
+            <input class="control" id="end-query" type="search" placeholder="例：北鎌倉駅" autocomplete="off">
+            <button class="secondary-button" id="search-end" type="button">検索</button>
+          </div>
+          <div class="station-results" id="end-results" aria-live="polite"></div>
+        </div>
+
+        <div class="field">
+          <label for="goal-type">散歩の目標</label>
+          <select class="control" id="goal-type">
+            <option value="distance">距離</option>
+            <option value="steps">歩数</option>
+            <option value="calories">消費カロリー</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="goal-value" id="goal-label">目標距離（km）</label>
+          <input class="control" id="goal-value" type="number" min="0.5" max="40" step="0.5" value="5">
+        </div>
+        <div class="field hidden" id="weight-field">
+          <label for="weight">体重（kg・任意）</label>
+          <input class="control" id="weight" type="number" min="25" max="250" step="1" placeholder="未入力なら60kgで目安を計算">
+        </div>
+
+        <div class="field">
+          <span class="field-label">寄り道したい場所</span>
+          <div class="category-list">
+            <label class="category-option"><input type="checkbox" value="cafe" checked>☕ カフェ</label>
+            <label class="category-option"><input type="checkbox" value="restaurant">🍜 飲食店</label>
+            <label class="category-option"><input type="checkbox" value="sauna">♨️ サウナ</label>
+            <label class="category-option"><input type="checkbox" value="park" checked>🌳 公園</label>
+            <label class="category-option"><input type="checkbox" value="photo">📷 フォトジェニック</label>
+            <label class="category-option"><input type="checkbox" value="shrine">⛩️ 神社・寺</label>
+          </div>
+          <label class="field-label rank-select" for="ranking">おすすめの基準（今後対応予定）</label>
+          <select class="control" id="ranking">
+            <option value="rating">評価を重視</option>
+            <option value="popular">人気・話題性を重視</option>
+          </select>
+          <p class="small-note">寄り道先は選んだカテゴリ数に応じて最大5か所。目標距離に合うよう数と場所を自動調整します。</p>
+        </div>
+
+        <div class="info-box">
+          無料の地図データには口コミ評価・人気順位がありません。上の基準はこの試作版の候補順にはまだ反映されず、候補は目標距離と出発地からの距離を目安に選びます。評判は各施設の地図検索で確認できます。
+        </div>
+        <button class="primary-button" id="create-route" type="button">おすすめルートを作る</button>
+        <p class="status" id="status" role="status" aria-live="polite">出発駅を検索するか、現在地から出発を選んでください。</p>
+      </section>
+
+      <section class="right-column" aria-label="ルートと寄り道候補">
+        <div class="map-card">
+          <div id="map" role="application" aria-label="散歩ルート地図"></div>
+          <div class="map-caption">背景地図: 地理院タイル（国土地理院） / 施設・経路データ © OpenStreetMap contributors</div>
+        </div>
+        <div class="results-card">
+          <div class="results-heading">
+            <h2>寄り道候補</h2>
+            <span class="results-summary" id="route-summary"></span>
+          </div>
+          <p class="route-note hidden" id="route-note"></p>
+          <div class="spot-list" id="spot-list">
+            <p class="empty-state">ルートを作ると、近くの寄り道候補が表示されます。</p>
+          </div>
+        </div>
+      </section>
+    </div>
+    <footer>
+      試作版は地理院タイル、OpenStreetMap、Nominatim、Overpass、公開徒歩ルーティングサービスを利用します。公開サービスには利用制限があり、混雑時は検索できない場合があります。距離・歩数・消費カロリーは概算です。
+    </footer>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    (() => {
+      const map = L.map("map").setView([35.6812, 139.7671], 11);
+      // 背景地図は地理院タイル。OSM公式タイルはローカルHTMLからだと利用ポリシー違反として403で拒否される
+      L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png", {
+        maxZoom: 18,
+        attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener noreferrer">地理院タイル</a> | 施設・経路 &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors'
+      }).addTo(map);
+
+      const state = {
+        start: null,
+        end: null,
+        routeType: "roundtrip",
+        routeLayer: null,
+        backtrackLayer: null,
+        markers: []
+      };
+      const $ = (id) => document.getElementById(id);
+
+      function setStatus(message, isError = false) {
+        $("status").textContent = message;
+        $("status").classList.toggle("error", isError);
+      }
+
+      function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, (char) => ({
+          "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+        })[char]);
+      }
+
+      function parseStationResult(item) {
+        const lat = Number(item.lat);
+        const lon = Number(item.lon);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+          throw new Error("駅の位置情報を読み取れませんでした。");
+        }
+        return { lat, lon, name: item.name || item.display_name.split(",")[0], address: item.display_name };
+      }
+
+      function selectPoint(which, point) {
+        state[which] = point;
+        $(which + "-query").value = point.name;
+        $(which + "-results").replaceChildren();
+        map.setView([point.lat, point.lon], 14);
+        L.popup().setLatLng([point.lat, point.lon]).setContent(escapeHtml(point.name)).openOn(map);
+      }
+
+      function useCurrentLocation() {
+        if (!navigator.geolocation) {
+          setStatus("このブラウザでは現在地を取得できません。駅名で検索してください。", true);
+          return;
+        }
+        // 位置情報は https:// か、PCで直接開いたページ（file:// や localhost）でしか使えない
+        if (!window.isSecureContext) {
+          setStatus("このアドレスでは現在地を使えません。https:// で公開したページから開いてください。", true);
+          return;
+        }
+        $("use-location").disabled = true;
+        setStatus("現在地を取得しています…");
+        navigator.geolocation.getCurrentPosition((position) => {
+          $("use-location").disabled = false;
+          const { latitude: lat, longitude: lon, accuracy } = position.coords;
+          selectPoint("start", { lat, lon, name: "現在地" });
+          setStatus(`出発地を現在地に設定しました（誤差 約${Math.round(accuracy)}m）。`);
+        }, (error) => {
+          $("use-location").disabled = false;
+          setStatus({
+            1: "位置情報の利用が許可されていません。ブラウザの設定で許可するか、駅名で検索してください。",
+            2: "現在地を特定できませんでした。電波の良い場所で再度お試しください。",
+            3: "現在地の取得に時間がかかりすぎました。再度お試しください。"
+          }[error.code] || "現在地を取得できませんでした。", true);
+        }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+      }
+
+      async function searchStations(which) {
+        const query = $(which + "-query").value.trim();
+        if (!query) {
+          setStatus("駅名を入力してください。", true);
+          return;
+        }
+        setStatus("駅を検索しています…");
+        $(which + "-results").replaceChildren();
+        try {
+          const params = new URLSearchParams({
+            q: query.replace(/駅$/, "") + "駅",
+            format: "jsonv2",
+            limit: "6",
+            countrycodes: "jp",
+            addressdetails: "1"
+          });
+          const response = await fetch("https://nominatim.openstreetmap.org/search?" + params);
+          if (!response.ok) throw new Error("駅検索サービスからエラーが返りました（" + response.status + "）。");
+          const results = await response.json();
+          if (!results.length) {
+            setStatus("駅が見つかりませんでした。別の表記でお試しください。", true);
+            return;
+          }
+          const stations = results.map(parseStationResult);
+          stations.forEach((station) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "station-option";
+            button.innerHTML = escapeHtml(station.name) + "<small>" + escapeHtml(station.address) + "</small>";
+            button.addEventListener("click", () => {
+              selectPoint(which, station);
+              setStatus(which === "start" ? "出発駅を設定しました。" : "到着駅を設定しました。");
+            });
+            $(which + "-results").append(button);
+          });
+          setStatus("候補から駅を選択してください。");
+        } catch (error) {
+          setStatus(error.message || "駅の検索に失敗しました。時間をおいて再度お試しください。", true);
+        }
+      }
+
+      function goalDistanceKm() {
+        const value = Number($("goal-value").value);
+        if (!Number.isFinite(value) || value <= 0) throw new Error("目標値には0より大きい数を入力してください。");
+        const type = $("goal-type").value;
+        if (type === "steps") return value / 1300;
+        if (type === "calories") return value / (Number($("weight").value) || 60) / 0.5;
+        return value;
+      }
+
+      function selectedCategories() {
+        return Array.from(document.querySelectorAll(".category-list input:checked")).map((input) => input.value);
+      }
+
+      function buildOverpassQuery(lat, lon, radius, categories) {
+        const selectors = [];
+        const add = (key, value, extra = "") => {
+          selectors.push(`node["${key}"="${value}"]${extra}(around:${radius},${lat},${lon});`);
+          selectors.push(`way["${key}"="${value}"]${extra}(around:${radius},${lat},${lon});`);
+        };
+        if (categories.includes("cafe")) add("amenity", "cafe");
+        if (categories.includes("restaurant")) {
+          for (const value of ["restaurant", "fast_food"]) add("amenity", value);
+        }
+        if (categories.includes("sauna")) {
+          add("leisure", "sauna");
+          add("amenity", "sauna");
+        }
+        if (categories.includes("park")) add("leisure", "park");
+        if (categories.includes("photo")) {
+          for (const value of ["viewpoint", "attraction", "artwork"]) add("tourism", value);
+          for (const value of ["castle", "ruins", "monument"]) add("historic", value);
+        }
+        if (categories.includes("shrine")) add("amenity", "place_of_worship", '["religion"~"shinto|buddhist"]');
+        return `[out:json][timeout:25];(${selectors.join("")});out center tags 400;`;
+      }
+
+      function categoryName(tags) {
+        if (tags.amenity === "cafe") return "カフェ";
+        if (tags.amenity === "restaurant" || tags.amenity === "fast_food") return "飲食店";
+        if (tags.amenity === "sauna" || tags.leisure === "sauna") return "サウナ";
+        if (tags.leisure === "park") return "公園";
+        if (tags.tourism === "viewpoint") return "展望スポット";
+        if (tags.tourism === "artwork") return "アート";
+        if (tags.amenity === "place_of_worship") return "神社・寺";
+        if (tags.historic) return "史跡";
+        if (tags.tourism === "attraction") return "名所";
+        return "寄り道スポット";
+      }
+
+      function placePosition(element) {
+        return {
+          lat: Number(element.lat ?? element.center?.lat),
+          lon: Number(element.lon ?? element.center?.lon)
+        };
+      }
+
+      // 公開Overpassは混雑で502/504や無応答になることがあるため、失敗したら別のインスタンスで再試行する
+      const OVERPASS_ENDPOINTS = [
+        "https://overpass-api.de/api/interpreter",
+        "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter"
+      ];
+
+      async function fetchOverpass(query) {
+        let lastError;
+        for (const [index, endpoint] of OVERPASS_ENDPOINTS.entries()) {
+          if (index > 0) setStatus(`検索サービスが混雑しているため、別のサーバーで再検索しています…（${index + 1}/${OVERPASS_ENDPOINTS.length}）`);
+          try {
+            const response = await fetch(endpoint, {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+              body: "data=" + encodeURIComponent(query),
+              signal: AbortSignal.timeout(30000) // 応答がないサーバーで待ち続けない
+            });
+            if (response.ok) return await response.json();
+            lastError = new Error("寄り道候補の検索に失敗しました（" + response.status + "）。");
+          } catch (error) {
+            lastError = new Error("寄り道候補の検索サービスに接続できませんでした。");
+          }
+        }
+        throw lastError;
+      }
+
+      async function findPlaces(start, targetKm, categories) {
+        const radius = Math.round(Math.max(900, Math.min(5000, targetKm * 600)));
+        const query = buildOverpassQuery(start.lat, start.lon, radius, categories);
+        const data = await fetchOverpass(query);
+        const seen = new Set();
+        const places = data.elements.map((element) => {
+          const position = placePosition(element);
+          const tags = element.tags || {};
+          const name = tags.name || tags["name:ja"] || categoryName(tags);
+          return {
+            id: element.type + "/" + element.id,
+            ...position,
+            name,
+            category: categoryName(tags),
+            tags
+          };
+        }).filter((place) => {
+          if (!Number.isFinite(place.lat) || !Number.isFinite(place.lon) || seen.has(place.id)) return false;
+          seen.add(place.id);
+          return true;
+        }).map((place) => ({
+          ...place,
+          distanceFromStart: haversineKm(start, place)
+        }));
+        return places;
+      }
+
+      // 駅から detourKm 前後の候補を種類が偏らないように選び、回りやすい順に並べる
+      function chooseStops(places, detourKm, count, start, end) {
+        const sorted = [...places].sort((a, b) => {
+          // 名前のある施設を優先し、その中で目標の距離に近い順
+          const named = Number(!a.tags.name) - Number(!b.tags.name);
+          if (named) return named;
+          return Math.abs(a.distanceFromStart - detourKm) - Math.abs(b.distanceFromStart - detourKm);
+        });
+        return orderStops(pickDiverse(sorted, count), start, end);
+      }
+
+      // 寄り道先までの距離と数を変えた組み合わせを作り、それぞれ直線での総距離を求めておく
+      function buildStopOptions(places, targetKm, maxCount, start, end) {
+        const options = new Map();
+        for (let count = maxCount; count >= 1; count--) {
+          for (let share = 0.05; share <= 0.6; share += 0.05) {
+            const stops = chooseStops(places, targetKm * share, count, start, end);
+            const key = stops.map((stop) => stop.id).join(",");
+            if (!stops.length || options.has(key)) continue;
+            let straightKm = 0;
+            [start, ...stops, end || start].reduce((from, to) => {
+              straightKm += haversineKm(from, to);
+              return to;
+            });
+            // 同じくらい目標に近ければ、寄り道の多い組み合わせを優先する
+            options.set(key, { stops, straightKm, fewerPenalty: (maxCount - stops.length) * 0.04 });
+          }
+        }
+        return Array.from(options.values());
+      }
+
+      // 周回は駅から見た方角順（ジグザグを避けて一周する）、片道は到着駅へ向かう順
+      function orderStops(stops, start, end) {
+        const scale = Math.cos(start.lat * Math.PI / 180);
+        const vector = (point) => ({ x: (point.lon - start.lon) * scale, y: point.lat - start.lat });
+        if (end) {
+          const dir = vector(end);
+          const along = (point) => vector(point).x * dir.x + vector(point).y * dir.y;
+          return [...stops].sort((a, b) => along(a) - along(b));
+        }
+        const angle = (point) => Math.atan2(vector(point).y, vector(point).x);
+        return [...stops].sort((a, b) => angle(a) - angle(b));
+      }
+
+      // 同じ種類ばかりにならないよう、種類ごとに上位から1件ずつ順番に選ぶ
+      function pickDiverse(places, limit) {
+        const groups = new Map();
+        for (const place of places) {
+          if (!groups.has(place.category)) groups.set(place.category, []);
+          groups.get(place.category).push(place);
+        }
+        const queues = Array.from(groups.values());
+        const picked = [];
+        while (picked.length < limit && queues.some((queue) => queue.length)) {
+          for (const queue of queues) {
+            if (queue.length && picked.length < limit) picked.push(queue.shift());
+          }
+        }
+        return picked;
+      }
+
+      function haversineKm(a, b) {
+        const radians = (degrees) => degrees * Math.PI / 180;
+        const dLat = radians(b.lat - a.lat);
+        const dLon = radians(b.lon - a.lon);
+        const value = Math.sin(dLat / 2) ** 2 +
+          Math.cos(radians(a.lat)) * Math.cos(radians(b.lat)) * Math.sin(dLon / 2) ** 2;
+        return 6371 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+      }
+
+      async function getWalkingRoute(points) {
+        const coordinates = points.map((point) => `${point.lon},${point.lat}`).join(";");
+        const url = `https://routing.openstreetmap.de/routed-foot/route/v1/driving/${coordinates}?overview=full&geometries=geojson&steps=false`;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error("徒歩ルートサービスに接続できませんでした（" + response.status + "）。");
+        const result = await response.json();
+        if (result.code !== "Ok" || !result.routes?.length) {
+          throw new Error("この駅間の徒歩ルートを作れませんでした。駅や目標距離を変えてお試しください。");
+        }
+        return result.routes[0];
+      }
+
+      function googleMapsSearchUrl(place) {
+        return "https://www.google.com/maps/search/?api=1&query=" +
+          encodeURIComponent(`${place.name} ${place.category}`);
+      }
+
+      function showPlaces(places, route, targetKm) {
+        const list = $("spot-list");
+        list.replaceChildren();
+        places.forEach((place, index) => {
+          const item = document.createElement("article");
+          item.className = "spot";
+          item.innerHTML =
+            `<div><div class="spot-name">${index + 1}. ${escapeHtml(place.name)}</div>` +
+            `<div class="spot-meta">${escapeHtml(place.category)} · 出発地から直線約${place.distanceFromStart.toFixed(1)}km</div></div>` +
+            `<a href="${googleMapsSearchUrl(place)}" target="_blank" rel="noopener noreferrer">口コミを見る ↗</a>`;
+          list.append(item);
+        });
+        const km = route.distance / 1000;
+        const minutes = Math.round(route.duration / 60);
+        const steps = Math.round(km * 1300);
+        const calories = Math.round(km * (Number($("weight").value) || 60) * 0.5);
+        $("route-summary").textContent = `${km.toFixed(1)}km（目標${targetKm.toFixed(1)}km） · 約${minutes}分 · 約${steps.toLocaleString()}歩 · 約${calories}kcal`;
+      }
+
+      // 同じ道を行って戻る区間を探す。経路を約10m間隔の点にならし、経路上で離れた位置にある
+      // 別の点が15m以内にあれば「もう一度通る道」とみなす（交差点を横切るだけの短い重なりは除外）
+      function findBacktracks(geometry) {
+        const coords = geometry.coordinates;
+        const lat0 = coords[0][1];
+        const toXY = ([lon, lat]) => ({ x: lon * 111320 * Math.cos(lat0 * Math.PI / 180), y: lat * 110540, lon, lat });
+        const points = [];
+        let along = 0;
+        for (let i = 0; i < coords.length - 1; i++) {
+          const a = toXY(coords[i]);
+          const b = toXY(coords[i + 1]);
+          const length = Math.hypot(b.x - a.x, b.y - a.y);
+          const pieces = Math.max(1, Math.ceil(length / 10));
+          for (let k = 0; k < pieces; k++) {
+            const t = k / pieces;
+            points.push({
+              x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t,
+              lon: a.lon + (b.lon - a.lon) * t, lat: a.lat + (b.lat - a.lat) * t,
+              along: along + length * t
+            });
+          }
+          along += length;
+        }
+        const cell = 20;
+        const grid = new Map();
+        const cellKey = (cx, cy) => cx + "," + cy;
+        points.forEach((point, index) => {
+          const key = cellKey(Math.floor(point.x / cell), Math.floor(point.y / cell));
+          if (!grid.has(key)) grid.set(key, []);
+          grid.get(key).push(index);
+        });
+        const repeated = points.map((point) => {
+          const cx = Math.floor(point.x / cell);
+          const cy = Math.floor(point.y / cell);
+          for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+              for (const j of grid.get(cellKey(cx + dx, cy + dy)) || []) {
+                const other = points[j];
+                if (Math.abs(other.along - point.along) > 80 && Math.hypot(other.x - point.x, other.y - point.y) <= 15) return true;
+              }
+            }
+          }
+          return false;
+        });
+        // 重なった点を連続区間にまとめ、ごく短いもの（交差点の横断など）は捨てる
+        const sections = [];
+        let current = [];
+        points.forEach((point, index) => {
+          if (repeated[index]) current.push(point);
+          if ((!repeated[index] || index === points.length - 1) && current.length) {
+            if (current.length >= 6) sections.push(current);
+            current = [];
+          }
+        });
+        const repeatedMeters = sections.reduce((sum, section) => sum + section[section.length - 1].along - section[0].along, 0);
+        return {
+          ratio: along ? repeatedMeters / along : 0,
+          // 往路と復路の両方が重なりとして数えられるので、道の長さとしては半分
+          backtrackKm: repeatedMeters / 2 / 1000,
+          sections: sections.map((section) => section.map((point) => [point.lat, point.lon]))
+        };
+      }
+
+      function showBacktracks(backtracks) {
+        const note = $("route-note");
+        if (backtracks.ratio >= 0.75) {
+          note.textContent = "↩ 往復コースです。行きと同じ道を通って戻ります（地図のオレンジの破線）。";
+        } else if (backtracks.backtrackKm >= 0.2) {
+          note.textContent = `↩ 約${backtracks.backtrackKm.toFixed(1)}kmは同じ道を往復します（地図のオレンジの破線）。`;
+        } else {
+          note.textContent = "";
+        }
+        note.classList.toggle("hidden", !note.textContent);
+        if (state.backtrackLayer) map.removeLayer(state.backtrackLayer);
+        // 地理院地図の黄色・オレンジの道路に埋もれないよう、白い縁取りの上に濃いオレンジの破線を重ねる
+        state.backtrackLayer = note.textContent
+          ? L.layerGroup([
+            L.polyline(backtracks.sections, { color: "#fff", weight: 9, opacity: 0.95 }),
+            L.polyline(backtracks.sections, { color: "#e8590c", weight: 5, opacity: 1, dashArray: "9 7" })
+          ]).addTo(map)
+          : null;
+      }
+
+      function drawRoute(route, start, end, places) {
+        map.closePopup();
+        if (state.routeLayer) map.removeLayer(state.routeLayer);
+        state.markers.forEach((marker) => map.removeLayer(marker));
+        state.markers = [];
+        state.routeLayer = L.geoJSON(route.geometry, {
+          style: { color: "#28664c", weight: 6, opacity: 0.85 }
+        }).addTo(map);
+        const stops = [start, ...places, ...(state.routeType === "oneway" ? [end] : [])];
+        stops.forEach((point, index) => {
+          const marker = L.marker([point.lat, point.lon]).addTo(map)
+            .bindPopup(escapeHtml(point.name || (index === 0 ? "出発地" : "到着駅")));
+          state.markers.push(marker);
+        });
+        showBacktracks(findBacktracks(route.geometry));
+        map.fitBounds(state.routeLayer.getBounds(), { padding: [28, 28] });
+      }
+
+      async function createRoute() {
+        try {
+          if (!state.start) throw new Error("出発駅を検索して候補から選ぶか、現在地から出発を押してください。");
+          if (state.routeType === "oneway" && !state.end) throw new Error("到着駅を検索して候補から選んでください。");
+          const categories = selectedCategories();
+          if (!categories.length) throw new Error("寄り道したい場所を1つ以上選んでください。");
+          const targetKm = goalDistanceKm();
+          if (targetKm > 40) throw new Error("目標距離は40km以下にしてください。");
+
+          $("create-route").disabled = true;
+          $("route-summary").textContent = "";
+          setStatus("近くの寄り道候補を探しています…");
+          const candidates = await findPlaces(state.start, targetKm, categories);
+          if (!candidates.length) throw new Error("近くに選択カテゴリの候補が見つかりませんでした。カテゴリや駅を変えてください。");
+
+          // 実際の徒歩距離が目標の±15%に収まるまで、別の寄り道の組み合わせで作り直す
+          const end = state.routeType === "oneway" ? state.end : null;
+          const options = buildStopOptions(candidates, targetKm, Math.min(5, Math.max(3, categories.length)), state.start, end);
+          let walkFactor = 1.3; // 直線距離に対する実際の道のりの倍率。ルート計算のたびに実測で更新する
+          let best = null;
+          for (let calls = 1; calls <= 4 && options.length; calls++) {
+            const score = (option) => Math.abs(option.straightKm * walkFactor - targetKm) / targetKm + option.fewerPenalty;
+            options.sort((a, b) => score(a) - score(b));
+            const { stops, straightKm } = options.shift();
+            setStatus(calls === 1 ? "徒歩ルートを計算しています…" : `目標距離に合わせて調整しています…（${calls}回目）`);
+            const route = await getWalkingRoute([state.start, ...stops, end || state.start]);
+            const km = route.distance / 1000;
+            if (!best || Math.abs(km - targetKm) < Math.abs(best.km - targetKm)) best = { route, stops, km };
+            if (Math.abs(km / targetKm - 1) <= 0.15) break;
+            if (straightKm > 0) walkFactor = km / straightKm;
+          }
+          const { route, stops: places, km } = best;
+          drawRoute(route, state.start, state.end, places);
+          showPlaces(places, route, targetKm);
+          const mapUrl = new URL("https://www.google.com/maps/dir/");
+          mapUrl.searchParams.set("api", "1");
+          mapUrl.searchParams.set("travelmode", "walking");
+          mapUrl.searchParams.set("origin", `${state.start.lat},${state.start.lon}`);
+          const destination = state.routeType === "roundtrip" ? state.start : state.end;
+          mapUrl.searchParams.set("destination", `${destination.lat},${destination.lon}`);
+          if (places.length) mapUrl.searchParams.set("waypoints", places.map((place) => `${place.lat},${place.lon}`).join("|"));
+          $("route-summary").innerHTML += ` · <a href="${mapUrl}" target="_blank" rel="noopener noreferrer">ナビを開く ↗</a>`;
+          const gapKm = km - targetKm;
+          setStatus(Math.abs(gapKm) <= targetKm * 0.15
+            ? "目標に近いルートを作成しました。口コミを確認して寄り道先を選べます。"
+            : `近くの候補では調整しきれず、目標より約${Math.abs(gapKm).toFixed(1)}km${gapKm > 0 ? "長い" : "短い"}ルートです。カテゴリや目標を変えると近づく場合があります。`);
+        } catch (error) {
+          setStatus(error.message || "ルート作成に失敗しました。時間をおいて再度お試しください。", true);
+        } finally {
+          $("create-route").disabled = false;
+        }
+      }
+
+      $("search-start").addEventListener("click", () => searchStations("start"));
+      $("use-location").addEventListener("click", useCurrentLocation);
+      $("search-end").addEventListener("click", () => searchStations("end"));
+      $("start-query").addEventListener("keydown", (event) => {
+        if (event.key === "Enter") searchStations("start");
+      });
+      $("end-query").addEventListener("keydown", (event) => {
+        if (event.key === "Enter") searchStations("end");
+      });
+      $("start-query").addEventListener("input", () => { state.start = null; });
+      $("end-query").addEventListener("input", () => { state.end = null; });
+      $("create-route").addEventListener("click", createRoute);
+      document.querySelectorAll("[data-route]").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.routeType = button.dataset.route;
+          document.querySelectorAll("[data-route]").forEach((other) =>
+            other.setAttribute("aria-pressed", String(other === button)));
+          $("end-field").classList.toggle("hidden", state.routeType !== "oneway");
+        });
+      });
+      $("goal-type").addEventListener("change", () => {
+        const type = $("goal-type").value;
+        const config = {
+          distance: ["目標距離（km）", "5", "0.5"],
+          steps: ["目標歩数（歩）", "7000", "100"],
+          calories: ["目標消費カロリー（kcal）", "300", "10"]
+        }[type];
+        $("goal-label").textContent = config[0];
+        $("goal-value").value = config[1];
+        $("goal-value").step = config[2];
+        $("goal-value").min = config[2];
+        $("weight-field").classList.toggle("hidden", type !== "calories");
+      });
+    })();
+  </script>
+</body>
+</html>
