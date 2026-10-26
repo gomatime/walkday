@@ -458,32 +458,64 @@
         };
       }
 
-      // 公開Overpassは混雑で502/504や無応答になることがあるため、失敗したら別のインスタンスで再試行する
+      // 公開Overpassは混雑で502/504や数十秒の遅延が起きるため、複数のインスタンスを使い分ける
       const OVERPASS_ENDPOINTS = [
         "https://overpass-api.de/api/interpreter",
         "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
         "https://overpass.kumi.systems/api/interpreter",
         "https://overpass.private.coffee/api/interpreter"
       ];
+      const OVERPASS_HEDGE_MS = 12000;   // この時間返事がなければ、待ったまま次のサーバーにも問い合わせる
+      const OVERPASS_TIMEOUT_MS = 60000; // 1サーバーあたりの待ち時間の上限
 
-      async function fetchOverpass(query) {
-        let lastError;
-        for (const [index, endpoint] of OVERPASS_ENDPOINTS.entries()) {
-          if (index > 0) setStatus(`検索サービスが混雑しているため、別のサーバーで再検索しています…（${index + 1}/${OVERPASS_ENDPOINTS.length}）`);
-          try {
-            const response = await fetch(endpoint, {
+      // 最初に返ってきた結果を使い、残りの問い合わせは止める。エラーが返ったらすぐ次へ進む
+      function fetchOverpass(query) {
+        return new Promise((resolve, reject) => {
+          const controllers = [];
+          let next = 0;
+          let failures = 0;
+          let settled = false;
+          let hedgeTimer = null;
+          let lastError = new Error("寄り道候補の検索サービスに接続できませんでした。");
+          const finish = () => {
+            settled = true;
+            clearTimeout(hedgeTimer);
+            controllers.forEach((controller) => controller.abort());
+          };
+          const launch = () => {
+            if (settled || next >= OVERPASS_ENDPOINTS.length) return;
+            const index = next++;
+            if (index > 0) setStatus(`検索サービスの応答が遅いため、別のサーバーにも問い合わせています…（${index + 1}/${OVERPASS_ENDPOINTS.length}）`);
+            const controller = new AbortController();
+            controllers.push(controller);
+            const timeout = setTimeout(() => controller.abort(), OVERPASS_TIMEOUT_MS);
+            clearTimeout(hedgeTimer);
+            hedgeTimer = setTimeout(launch, OVERPASS_HEDGE_MS);
+            fetch(OVERPASS_ENDPOINTS[index], {
               method: "POST",
               headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
               body: "data=" + encodeURIComponent(query),
-              signal: AbortSignal.timeout(30000) // 応答がないサーバーで待ち続けない
-            });
-            if (response.ok) return await response.json();
-            lastError = new Error("寄り道候補の検索に失敗しました（" + response.status + "）。");
-          } catch (error) {
-            lastError = new Error("寄り道候補の検索サービスに接続できませんでした。");
-          }
-        }
-        throw lastError;
+              signal: controller.signal
+            }).then((response) => {
+              if (!response.ok) throw new Error("寄り道候補の検索に失敗しました（" + response.status + "）。");
+              return response.json();
+            }).then((data) => {
+              if (settled) return;
+              finish();
+              resolve(data);
+            }).catch((error) => {
+              if (settled) return;
+              if (error.message.startsWith("寄り道候補")) lastError = error;
+              if (++failures === OVERPASS_ENDPOINTS.length) {
+                finish();
+                reject(lastError);
+              } else {
+                launch();
+              }
+            }).finally(() => clearTimeout(timeout));
+          };
+          launch();
+        });
       }
 
       async function findPlaces(start, targetKm, categories) {
