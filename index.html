@@ -149,7 +149,8 @@
     #map { height: 490px; width: 100%; background: #e9efea; }
     .map-caption { padding: 10px 14px; color: var(--muted); font-size: 12px; }
     .results-card { padding: 18px; }
-    .results-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+    .results-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; column-gap: 10px; }
+    .results-heading h2 { white-space: nowrap; }
     .results-heading h2 { margin-bottom: 12px; }
     .results-summary { color: var(--muted); font-size: 13px; }
     .spot-list { display: grid; gap: 9px; }
@@ -168,7 +169,13 @@
     .empty-state { margin: 0; color: var(--muted); font-size: 13px; }
     footer { margin: 17px 2px 0; color: var(--muted); font-size: 11px; }
 
-    .nav-start { margin: 0 0 12px; }
+    .plan-hint { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
+    .plan-actions { display: grid; gap: 8px; margin: 0 0 12px; }
+    .spot.selected { border-color: var(--green); background: #f6faf7; }
+    .spot-check { display: flex; flex: 1; align-items: flex-start; gap: 10px; cursor: pointer; }
+    .spot-check input { width: 18px; height: 18px; margin: 3px 0 0; accent-color: var(--green); }
+    .spot-name, .spot-meta { display: block; }
+    .spot-badge { margin-left: 6px; padding: 1px 6px; border-radius: 6px; background: var(--accent); color: var(--green-dark); font-size: 11px; font-weight: 700; }
     .nav-panel {
       position: fixed;
       right: 0;
@@ -289,7 +296,7 @@
             <option value="rating">評価を重視</option>
             <option value="popular">人気・話題性を重視</option>
           </select>
-          <p class="small-note">寄り道先は選んだカテゴリ数に応じて最大5か所。目標距離に合うよう数と場所を自動調整します。</p>
+          <p class="small-note">目標距離に合うおすすめの寄り道先を提案します。ルートを作った後、周辺の候補から寄りたい場所を選び直して決定できます。</p>
         </div>
 
         <div class="info-box">
@@ -306,11 +313,17 @@
         </div>
         <div class="results-card">
           <div class="results-heading">
-            <h2>寄り道候補</h2>
+            <h2 id="results-title">寄り道候補</h2>
             <span class="results-summary" id="route-summary"></span>
           </div>
           <p class="route-note hidden" id="route-note"></p>
-          <button class="primary-button nav-start hidden" id="nav-start" type="button">▶ この地図でナビ開始</button>
+          <p class="plan-hint hidden" id="plan-hint"></p>
+          <div class="plan-actions">
+            <button class="primary-button hidden" id="plan-update" type="button">選んだ場所でルートを更新</button>
+            <button class="primary-button hidden" id="plan-decide" type="button">この内容で決定</button>
+            <button class="primary-button hidden" id="nav-start" type="button">▶ この地図でナビ開始</button>
+            <button class="secondary-button hidden" id="plan-reselect" type="button">寄り道先を選び直す</button>
+          </div>
           <div class="spot-list" id="spot-list">
             <p class="empty-state">ルートを作ると、近くの寄り道候補が表示されます。</p>
           </div>
@@ -356,7 +369,9 @@
         routeLayer: null,
         backtrackLayer: null,
         markers: [],
-        current: null // 直近に作ったルート { route, places, destination }。ナビで使う
+        current: null, // 直近に作ったルート { route, places, destination }。ナビで使う
+        plan: null,    // 寄り道先の選択状態 { candidates, recommended, selected, targetKm, dirty, decided }
+        candidateLayer: null
       };
       const $ = (id) => document.getElementById(id);
 
@@ -686,23 +701,143 @@
           encodeURIComponent(`${place.name} ${place.category}`);
       }
 
-      function showPlaces(places, route, targetKm) {
-        const list = $("spot-list");
-        list.replaceChildren();
-        places.forEach((place, index) => {
-          const item = document.createElement("article");
-          item.className = "spot";
-          item.innerHTML =
-            `<div><div class="spot-name">${index + 1}. ${escapeHtml(place.name)}</div>` +
-            `<div class="spot-meta">${escapeHtml(place.category)} · 出発地から直線約${place.distanceFromStart.toFixed(1)}km</div></div>` +
-            `<a href="${googleMapsSearchUrl(place)}" target="_blank" rel="noopener noreferrer">口コミを見る ↗</a>`;
-          list.append(item);
+      // ---- 寄り道先の選択と決定 ----
+      const MAX_SELECTED = 8;
+
+      // おすすめの寄り道先に加えて、同じくらいの距離にある周辺候補を最大10か所まで並べる
+      function pickCandidatesToShow(candidates, recommended) {
+        const typicalKm = recommended.reduce((sum, place) => sum + place.distanceFromStart, 0) / recommended.length;
+        const picked = new Set(recommended.map((place) => place.id));
+        const others = candidates.filter((place) => !picked.has(place.id)).sort((a, b) => {
+          const named = Number(!a.tags.name) - Number(!b.tags.name);
+          if (named) return named;
+          return Math.abs(a.distanceFromStart - typicalKm) - Math.abs(b.distanceFromStart - typicalKm);
         });
+        return [...recommended, ...pickDiverse(others, Math.max(0, 10 - recommended.length))];
+      }
+
+      function routeGapMessage(km, targetKm) {
+        const gapKm = km - targetKm;
+        return Math.abs(gapKm) <= targetKm * 0.15
+          ? "目標に近いルートです。"
+          : `目標より約${Math.abs(gapKm).toFixed(1)}km${gapKm > 0 ? "長い" : "短い"}ルートです。`;
+      }
+
+      // ルートを地図・概要・ナビ用の状態に反映する
+      function applyRoute(route, places, targetKm) {
+        drawRoute(route, state.start, state.end, places);
         const km = route.distance / 1000;
         const minutes = Math.round(route.duration / 60);
         const steps = Math.round(km * 1300);
         const calories = Math.round(km * (Number($("weight").value) || 60) * 0.5);
-        $("route-summary").textContent = `${km.toFixed(1)}km（目標${targetKm.toFixed(1)}km） · 約${minutes}分 · 約${steps.toLocaleString()}歩 · 約${calories}kcal`;
+        const destination = state.routeType === "roundtrip" ? state.start : state.end;
+        const mapUrl = new URL("https://www.google.com/maps/dir/");
+        mapUrl.searchParams.set("api", "1");
+        mapUrl.searchParams.set("travelmode", "walking");
+        mapUrl.searchParams.set("origin", `${state.start.lat},${state.start.lon}`);
+        mapUrl.searchParams.set("destination", `${destination.lat},${destination.lon}`);
+        if (places.length) mapUrl.searchParams.set("waypoints", places.map((place) => `${place.lat},${place.lon}`).join("|"));
+        $("route-summary").innerHTML = `${km.toFixed(1)}km（目標${targetKm.toFixed(1)}km） · 約${minutes}分 · 約${steps.toLocaleString()}歩 · 約${calories}kcal` +
+          ` · <a href="${mapUrl}" target="_blank" rel="noopener noreferrer">Googleマップで開く ↗</a>`;
+        state.current = { route, places, destination };
+      }
+
+      function renderPlan() {
+        const plan = state.plan;
+        const list = $("spot-list");
+        list.replaceChildren();
+        $("results-title").textContent = plan.decided ? "決定したルート" : "寄り道候補";
+        // 決定後はルートで回る順に、選んだ場所だけを表示する
+        const shown = plan.decided ? state.current.places : plan.candidates;
+        shown.forEach((place, index) => {
+          const selected = plan.selected.has(place.id);
+          const item = document.createElement("article");
+          item.className = "spot" + (selected ? " selected" : "");
+          const badge = plan.recommended.has(place.id) ? '<span class="spot-badge">おすすめ</span>' : "";
+          const meta = `${escapeHtml(place.category)} · 出発地から直線約${place.distanceFromStart.toFixed(1)}km`;
+          item.innerHTML = plan.decided
+            ? `<div><span class="spot-name">${index + 1}. ${escapeHtml(place.name)}</span><span class="spot-meta">${meta}</span></div>`
+            : `<label class="spot-check"><input type="checkbox" data-id="${escapeHtml(place.id)}"${selected ? " checked" : ""}>` +
+              `<span><span class="spot-name">${escapeHtml(place.name)}${badge}</span><span class="spot-meta">${meta}</span></span></label>`;
+          item.insertAdjacentHTML("beforeend",
+            `<a href="${googleMapsSearchUrl(place)}" target="_blank" rel="noopener noreferrer">口コミを見る ↗</a>`);
+          list.append(item);
+        });
+        list.querySelectorAll("input[data-id]").forEach((input) => {
+          input.addEventListener("change", () => toggleCandidate(input.dataset.id));
+        });
+
+        // 地図上の候補：選択中は緑、未選択は白の丸。タップで付け外しできる
+        if (state.candidateLayer) map.removeLayer(state.candidateLayer);
+        state.candidateLayer = plan.decided ? null : L.layerGroup(plan.candidates.map((place) => {
+          const selected = plan.selected.has(place.id);
+          return L.circleMarker([place.lat, place.lon], {
+            radius: 9, weight: 3, color: selected ? "#fff" : "#6b7a72",
+            fillColor: selected ? "#28664c" : "#fff", fillOpacity: 1
+          }).bindTooltip(escapeHtml(place.name), { direction: "top", offset: [0, -8] })
+            .on("click", () => toggleCandidate(place.id));
+        })).addTo(map);
+
+        $("plan-hint").textContent = plan.decided ? ""
+          : "✓ を付けた場所を通るルートにします。地図の丸をタップしても選べます。";
+        $("plan-hint").classList.toggle("hidden", plan.decided);
+        $("plan-update").classList.toggle("hidden", plan.decided || !plan.dirty);
+        $("plan-decide").classList.toggle("hidden", plan.decided || plan.dirty);
+        $("plan-reselect").classList.toggle("hidden", !plan.decided || nav.active);
+        $("nav-start").classList.toggle("hidden", !plan.decided || nav.active);
+      }
+
+      function toggleCandidate(id) {
+        const plan = state.plan;
+        if (!plan || plan.decided) return;
+        const place = plan.candidates.find((candidate) => candidate.id === id);
+        if (plan.selected.has(id)) {
+          plan.selected.delete(id);
+          setStatus(`「${place.name}」を外しました。「選んだ場所でルートを更新」で反映されます。`);
+        } else if (plan.selected.size >= MAX_SELECTED) {
+          setStatus(`寄り道先は${MAX_SELECTED}か所まで選べます。`, true);
+        } else {
+          plan.selected.add(id);
+          setStatus(`「${place.name}」を追加しました。「選んだ場所でルートを更新」で反映されます。`);
+        }
+        plan.dirty = true;
+        renderPlan();
+      }
+
+      async function updatePlanRoute() {
+        const plan = state.plan;
+        const chosen = plan.candidates.filter((place) => plan.selected.has(place.id));
+        if (state.routeType === "roundtrip" && !chosen.length) {
+          setStatus("出発地に戻るルートでは、寄り道先を1つ以上選んでください。", true);
+          return;
+        }
+        $("plan-update").disabled = true;
+        setStatus("選んだ場所を回るルートを計算しています…");
+        try {
+          const end = state.routeType === "oneway" ? state.end : null;
+          const stops = orderStops(chosen, state.start, end);
+          const route = await getWalkingRoute([state.start, ...stops, end || state.start]);
+          applyRoute(route, stops, plan.targetKm);
+          plan.dirty = false;
+          renderPlan();
+          setStatus(`${routeGapMessage(route.distance / 1000, plan.targetKm)}よければ「この内容で決定」を押してください。`);
+        } catch (error) {
+          setStatus(error.message || "ルートを計算できませんでした。", true);
+        } finally {
+          $("plan-update").disabled = false;
+        }
+      }
+
+      function decidePlan() {
+        state.plan.decided = true;
+        renderPlan();
+        setStatus("ルートを決定しました。「この地図でナビ開始」で案内を始められます。");
+      }
+
+      function reselectPlan() {
+        state.plan.decided = false;
+        renderPlan();
+        setStatus("寄り道先を選び直せます。");
       }
 
       // 同じ道を行って戻る区間を探す。経路を約10m間隔の点にならし、経路上で離れた位置にある
@@ -839,22 +974,18 @@
             if (straightKm > 0) walkFactor = km / straightKm;
           }
           const { route, stops: places, km } = best;
-          drawRoute(route, state.start, state.end, places);
-          showPlaces(places, route, targetKm);
-          const mapUrl = new URL("https://www.google.com/maps/dir/");
-          mapUrl.searchParams.set("api", "1");
-          mapUrl.searchParams.set("travelmode", "walking");
-          mapUrl.searchParams.set("origin", `${state.start.lat},${state.start.lon}`);
-          const destination = state.routeType === "roundtrip" ? state.start : state.end;
-          mapUrl.searchParams.set("destination", `${destination.lat},${destination.lon}`);
-          if (places.length) mapUrl.searchParams.set("waypoints", places.map((place) => `${place.lat},${place.lon}`).join("|"));
-          $("route-summary").innerHTML += ` · <a href="${mapUrl}" target="_blank" rel="noopener noreferrer">Googleマップで開く ↗</a>`;
-          state.current = { route, places, destination };
-          $("nav-start").classList.remove("hidden");
-          const gapKm = km - targetKm;
-          setStatus(Math.abs(gapKm) <= targetKm * 0.15
-            ? "目標に近いルートを作成しました。口コミを確認して寄り道先を選べます。"
-            : `近くの候補では調整しきれず、目標より約${Math.abs(gapKm).toFixed(1)}km${gapKm > 0 ? "長い" : "短い"}ルートです。カテゴリや目標を変えると近づく場合があります。`);
+          applyRoute(route, places, targetKm);
+          state.plan = {
+            candidates: pickCandidatesToShow(candidates, places),
+            recommended: new Set(places.map((place) => place.id)),
+            selected: new Set(places.map((place) => place.id)),
+            targetKm,
+            dirty: false,
+            decided: false
+          };
+          renderPlan();
+          setStatus(`おすすめの寄り道先でルートを作りました。${routeGapMessage(km, targetKm)}` +
+            "候補のチェックを付け外しして寄りたい場所を選び、「この内容で決定」を押してください。");
         } catch (error) {
           setStatus(error.message || "ルート作成に失敗しました。時間をおいて再度お試しください。", true);
         } finally {
@@ -1087,7 +1218,7 @@
         $("nav-alert").classList.add("hidden");
         $("nav-toast").classList.add("hidden");
         $("nav-panel").classList.remove("hidden");
-        $("nav-start").classList.add("hidden");
+        renderPlan();
         document.body.classList.add("navigating");
         map.invalidateSize(); // ナビ中は地図を大きくするので、Leafletにサイズ変更を伝える
         document.querySelector(".map-card").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1112,7 +1243,7 @@
         $("nav-panel").classList.add("hidden");
         document.body.classList.remove("navigating");
         map.invalidateSize();
-        if (state.current) $("nav-start").classList.remove("hidden");
+        if (state.plan) renderPlan();
       }
 
       // ルートを外れたら、現在地からまだ行っていない寄り道先とゴールを通るルートを作り直す
@@ -1139,6 +1270,9 @@
         }
       }
 
+      $("plan-update").addEventListener("click", updatePlanRoute);
+      $("plan-decide").addEventListener("click", decidePlan);
+      $("plan-reselect").addEventListener("click", reselectPlan);
       $("nav-start").addEventListener("click", startNav);
       $("nav-stop").addEventListener("click", stopNav);
       $("nav-reroute").addEventListener("click", rerouteFromHere);
