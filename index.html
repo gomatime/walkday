@@ -168,6 +168,41 @@
     .empty-state { margin: 0; color: var(--muted); font-size: 13px; }
     footer { margin: 17px 2px 0; color: var(--muted); font-size: 11px; }
 
+    .nav-start { margin: 0 0 12px; }
+    .nav-panel {
+      position: fixed;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      z-index: 1000;
+      padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+      border-top: 1px solid var(--line);
+      background: var(--paper);
+      box-shadow: 0 -8px 30px rgb(31 58 43 / 14%);
+    }
+    .nav-inner { max-width: 760px; margin: 0 auto; }
+    .nav-instruction { font-size: 20px; font-weight: 700; line-height: 1.35; }
+    .nav-stats { margin-top: 3px; color: var(--muted); font-size: 13px; }
+    .nav-alert, .nav-toast {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 8px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      font-size: 13px;
+    }
+    .nav-alert { background: #fdecec; color: #a83232; }
+    .nav-alert .secondary-button { min-height: 34px; padding: 5px 10px; background: #fff; color: #a83232; }
+    .nav-toast { background: var(--accent); color: var(--green-dark); font-weight: 700; }
+    .nav-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+    .nav-actions .secondary-button { flex: 1; min-height: 40px; }
+    .nav-voice { display: flex; flex: 1.2; align-items: center; gap: 5px; font-size: 13px; }
+    .nav-voice input { accent-color: var(--green); }
+    body.navigating { padding-bottom: 200px; }
+    body.navigating #map { height: 60vh; }
+
     @media (max-width: 800px) {
       .shell { padding: 16px; }
       .layout { grid-template-columns: 1fr; gap: 14px; }
@@ -275,6 +310,7 @@
             <span class="results-summary" id="route-summary"></span>
           </div>
           <p class="route-note hidden" id="route-note"></p>
+          <button class="primary-button nav-start hidden" id="nav-start" type="button">▶ この地図でナビ開始</button>
           <div class="spot-list" id="spot-list">
             <p class="empty-state">ルートを作ると、近くの寄り道候補が表示されます。</p>
           </div>
@@ -285,6 +321,23 @@
       試作版は地理院タイル、OpenStreetMap、Nominatim、Overpass、公開徒歩ルーティングサービスを利用します。公開サービスには利用制限があり、混雑時は検索できない場合があります。距離・歩数・消費カロリーは概算です。
     </footer>
   </main>
+
+  <div class="nav-panel hidden" id="nav-panel" role="region" aria-label="経路案内">
+    <div class="nav-inner">
+      <div class="nav-instruction" id="nav-instruction" aria-live="polite">現在地を取得しています…</div>
+      <div class="nav-stats" id="nav-stats"></div>
+      <div class="nav-toast hidden" id="nav-toast" role="status"></div>
+      <div class="nav-alert hidden" id="nav-alert" role="alert">
+        <span>ルートから外れています</span>
+        <button class="secondary-button" id="nav-reroute" type="button">ここから再計算</button>
+      </div>
+      <div class="nav-actions">
+        <label class="nav-voice"><input type="checkbox" id="nav-voice">音声案内</label>
+        <button class="secondary-button" id="nav-recenter" type="button">現在地へ</button>
+        <button class="secondary-button" id="nav-stop" type="button">案内終了</button>
+      </div>
+    </div>
+  </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
@@ -302,7 +355,8 @@
         routeType: "roundtrip",
         routeLayer: null,
         backtrackLayer: null,
-        markers: []
+        markers: [],
+        current: null // 直近に作ったルート { route, places, destination }。ナビで使う
       };
       const $ = (id) => document.getElementById(id);
 
@@ -617,7 +671,7 @@
 
       async function getWalkingRoute(points) {
         const coordinates = points.map((point) => `${point.lon},${point.lat}`).join(";");
-        const url = `https://routing.openstreetmap.de/routed-foot/route/v1/driving/${coordinates}?overview=full&geometries=geojson&steps=false`;
+        const url = `https://routing.openstreetmap.de/routed-foot/route/v1/driving/${coordinates}?overview=full&geometries=geojson&steps=true`;
         const response = await fetch(url);
         if (!response.ok) throw new Error("徒歩ルートサービスに接続できませんでした（" + response.status + "）。");
         const result = await response.json();
@@ -761,6 +815,7 @@
           const targetKm = goalDistanceKm();
           if (targetKm > 40) throw new Error("目標距離は40km以下にしてください。");
 
+          if (nav.active) stopNav();
           $("create-route").disabled = true;
           $("route-summary").textContent = "";
           setStatus("近くの寄り道候補を探しています…");
@@ -793,7 +848,9 @@
           const destination = state.routeType === "roundtrip" ? state.start : state.end;
           mapUrl.searchParams.set("destination", `${destination.lat},${destination.lon}`);
           if (places.length) mapUrl.searchParams.set("waypoints", places.map((place) => `${place.lat},${place.lon}`).join("|"));
-          $("route-summary").innerHTML += ` · <a href="${mapUrl}" target="_blank" rel="noopener noreferrer">ナビを開く ↗</a>`;
+          $("route-summary").innerHTML += ` · <a href="${mapUrl}" target="_blank" rel="noopener noreferrer">Googleマップで開く ↗</a>`;
+          state.current = { route, places, destination };
+          $("nav-start").classList.remove("hidden");
           const gapKm = km - targetKm;
           setStatus(Math.abs(gapKm) <= targetKm * 0.15
             ? "目標に近いルートを作成しました。口コミを確認して寄り道先を選べます。"
@@ -804,6 +861,297 @@
           $("create-route").disabled = false;
         }
       }
+
+      // ---- 地図上の経路案内（GPSナビ） ----
+      const nav = {
+        active: false,
+        watchId: null,
+        wakeLock: null,
+        follow: true,
+        points: [],        // ルート上の点（ローカル平面のx,yと、出発からの道のりalong[m]）
+        totalM: 0,
+        speed: 1.3,        // m/s。ルートの所要時間から求める
+        legEnds: [],       // 各寄り道先・ゴールに着く地点の道のり[m]
+        instructions: [],  // 曲がり角などの案内 { along, text }
+        stops: [],
+        progress: 0,       // 歩いた道のり[m]（後戻りはしない）
+        segIndex: 0,
+        offCount: 0,
+        spoken: new Set(),
+        arrived: new Set(),
+        lastFix: null,
+        youMarker: null,
+        accuracyCircle: null,
+        walkedLayer: null,
+        toastTimer: null
+      };
+      const TURN_TEXT = {
+        left: "左折", right: "右折", "slight left": "やや左へ", "slight right": "やや右へ",
+        "sharp left": "大きく左へ", "sharp right": "大きく右へ", uturn: "Uターン"
+      };
+
+      function project(lat, lon, lat0) {
+        return { x: lon * 111320 * Math.cos(lat0 * Math.PI / 180), y: lat * 110540 };
+      }
+
+      function formatMeters(meters) {
+        return meters < 1000 ? `${Math.max(10, Math.round(meters / 10) * 10)}m` : `${(meters / 1000).toFixed(1)}km`;
+      }
+
+      function prepareNavRoute(route, stops) {
+        const coords = route.geometry.coordinates;
+        const lat0 = coords[0][1];
+        let along = 0;
+        nav.points = coords.map(([lon, lat]) => ({ ...project(lat, lon, lat0), lat, lon, lat0 }));
+        nav.points.forEach((point, index) => {
+          if (index > 0) along += Math.hypot(point.x - nav.points[index - 1].x, point.y - nav.points[index - 1].y);
+          point.along = along;
+        });
+        nav.totalM = along;
+        // OSRMの距離と線形から測った距離の差をならす
+        const scale = route.distance > 0 ? along / route.distance : 1;
+        nav.speed = route.duration > 0 ? route.distance / route.duration : 1.3;
+        nav.stops = stops;
+        nav.legEnds = [];
+        nav.instructions = [];
+        let legStart = 0;
+        route.legs.forEach((leg, legIndex) => {
+          const isLastLeg = legIndex === route.legs.length - 1;
+          let stepStart = legStart;
+          leg.steps.forEach((step) => {
+            const maneuver = step.maneuver;
+            let text = null;
+            if (maneuver.type === "arrive") text = isLastLeg ? "ゴールに到着" : `${stops[legIndex].name}に到着`;
+            else if (maneuver.type !== "depart" && TURN_TEXT[maneuver.modifier]) {
+              text = TURN_TEXT[maneuver.modifier] + (step.name ? `（${step.name}）` : "");
+            }
+            if (text) nav.instructions.push({ along: stepStart * scale, text });
+            stepStart += step.distance;
+          });
+          legStart += leg.distance;
+          nav.legEnds.push(legStart * scale);
+        });
+        nav.progress = 0;
+        nav.segIndex = 0;
+        nav.offCount = 0;
+        nav.spoken = new Set();
+        nav.arrived = new Set();
+      }
+
+      // 現在地をルートに当てはめる。往復区間で帰り道に飛ばないよう、まずは今いる付近から前方を探す
+      function snapToRoute(lat, lon) {
+        const here = project(lat, lon, nav.points[0].lat0);
+        const check = (from, to) => {
+          let best = null;
+          for (let i = Math.max(0, from); i < Math.min(to, nav.points.length - 1); i++) {
+            const a = nav.points[i];
+            const b = nav.points[i + 1];
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const lengthSq = dx * dx + dy * dy || 1;
+            const t = Math.max(0, Math.min(1, ((here.x - a.x) * dx + (here.y - a.y) * dy) / lengthSq));
+            const dist = Math.hypot(a.x + dx * t - here.x, a.y + dy * t - here.y);
+            if (!best || dist < best.dist) best = { dist, segIndex: i, along: a.along + (b.along - a.along) * t };
+          }
+          return best;
+        };
+        let end = nav.segIndex;
+        while (end < nav.points.length - 1 && nav.points[end].along < nav.progress + 300) end++;
+        const nearby = check(nav.segIndex - 3, end + 1);
+        return nearby && nearby.dist <= 50 ? nearby : check(0, nav.points.length);
+      }
+
+      function pointAt(along) {
+        const latlngs = [];
+        for (let i = 0; i < nav.points.length; i++) {
+          const point = nav.points[i];
+          if (point.along <= along) {
+            latlngs.push([point.lat, point.lon]);
+            continue;
+          }
+          const prev = nav.points[i - 1];
+          const t = (along - prev.along) / ((point.along - prev.along) || 1);
+          latlngs.push([prev.lat + (point.lat - prev.lat) * t, prev.lon + (point.lon - prev.lon) * t]);
+          break;
+        }
+        return latlngs;
+      }
+
+      function speak(text) {
+        if (!$("nav-voice").checked || !window.speechSynthesis) return;
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = "ja-JP";
+        window.speechSynthesis.speak(utterance);
+      }
+
+      function showToast(text) {
+        $("nav-toast").textContent = text;
+        $("nav-toast").classList.remove("hidden");
+        clearTimeout(nav.toastTimer);
+        nav.toastTimer = setTimeout(() => $("nav-toast").classList.add("hidden"), 8000);
+        if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+        speak(text);
+      }
+
+      function updateNavPanel() {
+        const remaining = Math.max(0, nav.totalM - nav.progress);
+        const nextIndex = nav.instructions.findIndex((instruction) => instruction.along > nav.progress + 5);
+        if (nextIndex >= 0) {
+          const next = nav.instructions[nextIndex];
+          const distance = next.along - nav.progress;
+          $("nav-instruction").textContent = distance < 30 ? `まもなく ${next.text}` : `${formatMeters(distance)}先 ${next.text}`;
+          if (distance <= 40 && !nav.spoken.has(nextIndex)) {
+            nav.spoken.add(nextIndex);
+            speak(`まもなく、${next.text}です`);
+          }
+        } else {
+          $("nav-instruction").textContent = "ルートに沿って進んでください";
+        }
+        const legIndex = nav.legEnds.findIndex((legEnd) => legEnd > nav.progress + 5);
+        const nextStop = legIndex < 0 ? "" : ` · 次: ${legIndex < nav.stops.length ? nav.stops[legIndex].name : "ゴール"}まで ${formatMeters(nav.legEnds[legIndex] - nav.progress)}`;
+        $("nav-stats").textContent = `残り ${formatMeters(remaining)} · 約${Math.max(1, Math.round(remaining / nav.speed / 60))}分${nextStop}`;
+      }
+
+      function checkArrivals() {
+        nav.legEnds.forEach((legEnd, legIndex) => {
+          if (nav.arrived.has(legIndex) || nav.progress < legEnd - 25) return;
+          nav.arrived.add(legIndex);
+          if (legIndex < nav.stops.length) {
+            showToast(`${nav.stops[legIndex].name}に到着しました`);
+          } else {
+            showToast("ゴールに到着しました。お疲れさまでした！");
+            $("nav-instruction").textContent = "ゴールに到着しました";
+            stopWatching();
+          }
+        });
+      }
+
+      function onNavPosition(position) {
+        const { latitude: lat, longitude: lon, accuracy } = position.coords;
+        nav.lastFix = { lat, lon };
+        if (!nav.youMarker) {
+          nav.accuracyCircle = L.circle([lat, lon], { radius: accuracy, color: "#1a73e8", weight: 1, fillOpacity: 0.12 }).addTo(map);
+          nav.youMarker = L.circleMarker([lat, lon], { radius: 8, color: "#fff", weight: 3, fillColor: "#1a73e8", fillOpacity: 1 }).addTo(map);
+        } else {
+          nav.youMarker.setLatLng([lat, lon]);
+          nav.accuracyCircle.setLatLng([lat, lon]).setRadius(accuracy);
+        }
+        if (nav.follow) map.setView([lat, lon], Math.max(map.getZoom(), 17));
+
+        const snapped = snapToRoute(lat, lon);
+        if (snapped.dist <= Math.max(35, Math.min(accuracy, 80))) {
+          nav.offCount = 0;
+          $("nav-alert").classList.add("hidden");
+          if (snapped.along > nav.progress) {
+            nav.progress = snapped.along;
+            nav.segIndex = snapped.segIndex;
+          }
+        } else if (++nav.offCount >= 3) {
+          $("nav-alert").classList.remove("hidden");
+        }
+        nav.walkedLayer.setLatLngs(pointAt(nav.progress));
+        updateNavPanel();
+        if (nav.offCount >= 3) $("nav-instruction").textContent = "ルートに戻るか、再計算してください";
+        checkArrivals();
+      }
+
+      function onNavError(error) {
+        if (error.code === 1) {
+          $("nav-instruction").textContent = "位置情報の利用が許可されていません。ブラウザの設定で許可してください。";
+          stopWatching();
+        } else {
+          $("nav-instruction").textContent = "GPSの信号を待っています…";
+        }
+      }
+
+      async function requestWakeLock() {
+        try {
+          if (navigator.wakeLock) nav.wakeLock = await navigator.wakeLock.request("screen");
+        } catch (error) {
+          nav.wakeLock = null; // 省電力モードなどで拒否されても案内は続ける
+        }
+      }
+
+      function startNav() {
+        if (!state.current) return;
+        if (!navigator.geolocation || !window.isSecureContext) {
+          setStatus("このページでは現在地を使えないため、ナビを開始できません。https:// で公開したページから開いてください。", true);
+          return;
+        }
+        prepareNavRoute(state.current.route, state.current.places);
+        nav.active = true;
+        nav.follow = true;
+        nav.walkedLayer = L.polyline([], { color: "#9aa5a0", weight: 7, opacity: 0.95 }).addTo(map);
+        $("nav-instruction").textContent = "現在地を取得しています…";
+        $("nav-stats").textContent = "";
+        $("nav-alert").classList.add("hidden");
+        $("nav-toast").classList.add("hidden");
+        $("nav-panel").classList.remove("hidden");
+        $("nav-start").classList.add("hidden");
+        document.body.classList.add("navigating");
+        map.invalidateSize(); // ナビ中は地図を大きくするので、Leafletにサイズ変更を伝える
+        document.querySelector(".map-card").scrollIntoView({ behavior: "smooth", block: "start" });
+        nav.watchId = navigator.geolocation.watchPosition(onNavPosition, onNavError,
+          { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
+        requestWakeLock();
+      }
+
+      function stopWatching() {
+        if (nav.watchId !== null) navigator.geolocation.clearWatch(nav.watchId);
+        nav.watchId = null;
+        if (nav.wakeLock) nav.wakeLock.release().catch(() => {});
+        nav.wakeLock = null;
+      }
+
+      function stopNav() {
+        stopWatching();
+        nav.active = false;
+        [nav.walkedLayer, nav.youMarker, nav.accuracyCircle].forEach((layer) => layer && map.removeLayer(layer));
+        nav.walkedLayer = nav.youMarker = nav.accuracyCircle = null;
+        if (window.speechSynthesis) window.speechSynthesis.cancel();
+        $("nav-panel").classList.add("hidden");
+        document.body.classList.remove("navigating");
+        map.invalidateSize();
+        if (state.current) $("nav-start").classList.remove("hidden");
+      }
+
+      // ルートを外れたら、現在地からまだ行っていない寄り道先とゴールを通るルートを作り直す
+      async function rerouteFromHere() {
+        if (!nav.lastFix) return;
+        $("nav-reroute").disabled = true;
+        try {
+          const firstPending = nav.legEnds.findIndex((legEnd, legIndex) => !nav.arrived.has(legIndex));
+          const remainingStops = nav.stops.slice(Math.max(0, firstPending));
+          const here = { ...nav.lastFix, name: "再計算地点" };
+          const route = await getWalkingRoute([here, ...remainingStops, state.current.destination]);
+          state.current = { ...state.current, route, places: remainingStops };
+          drawRoute(route, here, state.end, remainingStops);
+          prepareNavRoute(route, remainingStops);
+          nav.walkedLayer.setLatLngs([]);
+          nav.walkedLayer.bringToFront();
+          nav.follow = true;
+          $("nav-alert").classList.add("hidden");
+          showToast("ルートを再計算しました");
+        } catch (error) {
+          showToast(error.message || "ルートを再計算できませんでした。");
+        } finally {
+          $("nav-reroute").disabled = false;
+        }
+      }
+
+      $("nav-start").addEventListener("click", startNav);
+      $("nav-stop").addEventListener("click", stopNav);
+      $("nav-reroute").addEventListener("click", rerouteFromHere);
+      $("nav-recenter").addEventListener("click", () => {
+        nav.follow = true;
+        if (nav.lastFix) map.setView([nav.lastFix.lat, nav.lastFix.lon], Math.max(map.getZoom(), 17));
+      });
+      // 音声はユーザー操作の直後でないと鳴らないブラウザがあるため、オンにした時点で一度話す
+      $("nav-voice").addEventListener("change", () => speak("音声案内をオンにしました"));
+      map.on("dragstart", () => { if (nav.active) nav.follow = false; });
+      document.addEventListener("visibilitychange", () => {
+        if (nav.watchId !== null && document.visibilityState === "visible") requestWakeLock();
+      });
 
       $("search-start").addEventListener("click", () => searchStations("start"));
       $("use-location").addEventListener("click", useCurrentLocation);
